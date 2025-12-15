@@ -8,7 +8,7 @@ use crate::{ExponentialMovingAverage, Snapshot, SnapshotSettings, linear_map};
 pub struct SnapshotInterpolation<T> {
     settings: &'static SnapshotSettings,
 
-    /// Buffer of interpolatables, ordered by remote time
+    /// Buffer of snapshots, ordered by remote time
     pub(crate) buf: VecDeque<T>,
 
     /// Aims to be remote_time - BUF_OFFSET
@@ -84,7 +84,7 @@ impl<T: Snapshot> SnapshotInterpolation<T> {
     }
 
     /// Compute the playback offset dynamically to adjust for
-    /// measured network jitter
+    /// measured network jitter. Exposed publically for debugging.
     pub fn dynamic_playback_offset(&self) -> f64 {
         let playback_offset = self.settings.playback_offset() as f64;
 
@@ -147,7 +147,7 @@ impl<T: Snapshot> SnapshotInterpolation<T> {
     }
 
     /// Draw a new interpolated snapshot by passing in how much time
-    /// has passed since the last step.
+    /// has passed since the last step (seconds).
     pub fn step(&mut self, delta_time: f64) -> Option<T> {
         //1. Step time
         self.playback_time += delta_time * self.timescale;
