@@ -172,7 +172,7 @@ pub fn main() {
                         remote_time: start.elapsed().as_millis() as u64,
                     },
                     Instant::now(),
-                    Duration::from_millis(bad_ping.sample(&mut rng) as u64),
+                    Duration::from_millis(good_ping.sample(&mut rng) as u64),
                 ));
             }
 
@@ -191,7 +191,7 @@ pub fn main() {
                 true
             });
 
-            ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 500));
+            ::std::thread::sleep(Duration::from_millis(1));
         }
 
         println!(
@@ -221,6 +221,6 @@ pub fn main() {
         );
         println!("timescale     {}", play.timescale,);
 
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 120));
+        ::std::thread::sleep(Duration::from_millis(4));
     }
 }

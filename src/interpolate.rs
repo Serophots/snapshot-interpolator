@@ -136,7 +136,7 @@ impl<T: Snapshot> Buffer<T> {
             .any(|b| b.remote_time() == item.remote_time())
         {
             //Skip duplicates
-            tracing::debug!("skipping duplicate position");
+            // tracing::debug!("skipping duplicate position");
             return;
         }
 
@@ -153,7 +153,7 @@ impl<T: Snapshot> Buffer<T> {
         } else if self.buf.is_empty() {
             self.buf.insert(0, item);
         } else {
-            tracing::debug!("packet too old");
+            // tracing::debug!("packet too old");
         }
     }
 }
@@ -187,46 +187,15 @@ impl<T: Snapshot> Playback<T> {
         // 1. Step playback time
         self.playback_time += delta_time * self.timescale;
 
-        if self.remote_counter != buf.last_remote_counter {
-            self.remote_counter = buf.last_remote_counter;
-            // A new network packet has arrived into the buffer
-
-            // 2. Clamp playback time about the target time +- the configured playback_clamp
-            let remote_time = buf.last_remote_time
-                // Account for any time which has passed since we, the local client, first
-                // saw this packet arrive in the buffer.
-                + buf.last_remote_instant.elapsed().as_millis() as f64;
-            let playback_target_time = remote_time - playback_offset;
-            let clamped_playback_time = self.playback_time.clamp(
-                playback_target_time - playback_clamp,
-                playback_target_time + playback_clamp,
-            );
-
-            if self.playback_time == clamped_playback_time {
-                self.db_clamping_ema.add(0.0);
-            } else {
-                self.db_clamping_ema.add(1.0);
-            }
-
-            self.playback_time = clamped_playback_time;
-
-            // 3. Add catchup time to moving average
-            let catchup_time = playback_target_time - self.playback_time;
-            self.catchup_time.add(catchup_time);
-
-            // 4. Correct the timescale in order to best track the remote's timescale
-            self.timescale = self.timescale(self.catchup_time.value.unwrap_or(0.0));
-        }
-
-        // Now the actual interpolation:
-        // 5. Find the packets which playback time must be between
+        // 2. Find the packets between which to interpolate (for later)
         let ss_from_pos = buf
             .buf
             .iter()
             .position(|b| b.remote_time() < self.playback_time);
-        if let Some((ss_from, ss_to)) = match ss_from_pos {
+        let mut extrapolating = 0.0;
+        let snapshots = match ss_from_pos {
             Some(0) => {
-                self.db_extrapolating_ema.add(1.0);
+                extrapolating = 1.0;
 
                 let ss_to = buf.buf.get(0);
                 let ss_from = buf.buf.get(1);
@@ -241,8 +210,6 @@ impl<T: Snapshot> Playback<T> {
                 }
             }
             Some(ss_from_pos) => {
-                self.db_extrapolating_ema.add(0.0);
-
                 let ss_to_pos = ss_from_pos - 1;
                 let ss_from = buf.buf.get(ss_from_pos);
                 let ss_to = buf.buf.get(ss_to_pos);
@@ -257,7 +224,42 @@ impl<T: Snapshot> Playback<T> {
                 }
             }
             _ => None,
-        } {
+        };
+
+        // A new network packet has arrived into the buffer
+        if self.remote_counter != buf.last_remote_counter {
+            self.remote_counter = buf.last_remote_counter;
+
+            // 3. Clamp the playback time about the target time
+            let remote_time = buf.last_remote_time
+                // Account for any time which has passed since we, the local client, first
+                // saw this packet arrive in the buffer.
+                + buf.last_remote_instant.elapsed().as_millis() as f64;
+            let playback_target_time = remote_time - playback_offset;
+
+            let last_playback_time = self.playback_time;
+            self.playback_time = self.playback_time.clamp(
+                playback_target_time - playback_clamp,
+                playback_target_time + playback_clamp,
+            );
+
+            if self.playback_time == last_playback_time {
+                self.db_clamping_ema.add(0.0);
+            } else {
+                self.db_clamping_ema.add(1.0);
+            }
+            self.db_extrapolating_ema.add(extrapolating);
+
+            // 4. Add catchup time to moving average
+            let catchup_time = playback_target_time - self.playback_time;
+            self.catchup_time.add(catchup_time);
+
+            // 5. Compute the timescale in order to best track the remote's timescale
+            self.timescale = self.timescale(self.catchup_time.value.unwrap_or(0.0));
+        }
+
+        // 6. Interpolate
+        if let Some((ss_from, ss_to)) = snapshots {
             let t = linear_map(
                 self.playback_time,
                 ss_from.remote_time(),
@@ -265,7 +267,6 @@ impl<T: Snapshot> Playback<T> {
                 0.0,
                 1.0,
             );
-            tracing::trace!(?ss_from_pos, "{}", t);
 
             Some(Snapshot::interpolate(t.clamp(0.0, 2.5), ss_from, ss_to))
         } else {
