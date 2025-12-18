@@ -1,5 +1,5 @@
 [package]
-name = "snapshot-interpolator"
+name = "snapshot"
 version = "0.1.0"
 edition = "2024"
 authors = ["tomtidbury07@gmail.com"]

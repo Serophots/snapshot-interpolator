@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{SNAPSHOT_SETTINGS_DEFAULT, Snapshot, SnapshotInterpolation};
+    use crate::{SNAPSHOT_SETTINGS_DEFAULT, Snapshot};
 
     #[derive(Copy, Clone, Debug)]
     struct TestSnapshot {
@@ -20,7 +20,8 @@ mod tests {
 
     #[test]
     fn test_snapshot_insertion() {
-        let mut buf = SnapshotInterpolation::new(&*SNAPSHOT_SETTINGS_DEFAULT);
+        let mut buf = crate::Buffer::new(&*SNAPSHOT_SETTINGS_DEFAULT);
+        // let mut play = snapshot::Playback::new(&buf);
 
         let one = TestSnapshot {
             time: 10.0,

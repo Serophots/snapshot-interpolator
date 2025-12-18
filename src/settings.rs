@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 #[derive(Clone)]
-pub struct SnapshotSettings {
+pub struct Settings {
     /// Largest size of the buffer which stores snapshots
     pub buf_size: usize,
 
@@ -39,12 +39,11 @@ pub struct SnapshotSettings {
     pub playback_fast_speed: f32,
 }
 
-pub static SNAPSHOT_SETTINGS_DEFAULT: LazyLock<SnapshotSettings> =
-    LazyLock::new(|| SnapshotSettings::default());
+pub static SNAPSHOT_SETTINGS_DEFAULT: LazyLock<Settings> = LazyLock::new(|| Settings::default());
 
-impl Default for SnapshotSettings {
+impl Default for Settings {
     fn default() -> Self {
-        SnapshotSettings {
+        Settings {
             buf_size: 32,
             period: 200,
 
@@ -62,20 +61,25 @@ impl Default for SnapshotSettings {
     }
 }
 
-impl SnapshotSettings {
-    pub(crate) fn playback_offset(&self) -> f32 {
+impl Settings {
+    pub fn playback_offset(&self) -> f32 {
         self.period as f32 * self.playback_offset_periods
     }
 
-    pub(crate) fn playback_clamp(&self) -> f32 {
+    pub fn playback_clamp(&self) -> f32 {
         self.period as f32 * self.playback_clamp_periods
     }
 
-    pub(crate) fn fast_threshold(&self) -> f32 {
+    pub fn fast_threshold(&self) -> f32 {
         self.period as f32 * self.playback_fast_periods
     }
 
-    pub(crate) fn slow_threshold(&self) -> f32 {
+    pub fn slow_threshold(&self) -> f32 {
         self.period as f32 * self.playback_slow_periods
+    }
+
+    /// Packets per Second (dispatched by the remote)
+    pub fn send_rate(&self) -> f64 {
+        1.0 / (self.period as f64 / 1000.0)
     }
 }
