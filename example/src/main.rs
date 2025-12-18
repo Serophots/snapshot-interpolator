@@ -33,11 +33,6 @@ impl snapshot::Snapshot for Position {
 }
 
 static SETTINGS: LazyLock<snapshot::Settings> = LazyLock::new(|| snapshot::Settings {
-    // playback_clamp_periods: 3.0,
-    // playback_fast_speed: 1.0 + 0.02,
-    // playback_slow_speed: 1.0 - 0.02,
-    dynamic_playback_time: false,
-    // playback_offset_periods: 0.2,
     ..Default::default()
 });
 
@@ -161,19 +156,15 @@ fn snapshot_example() {
                 } => match keycode {
                     Keycode::Left => {
                         dx = -CUBE_SPEED;
-                        // dy = 0;
                     }
                     Keycode::Right => {
                         dx = CUBE_SPEED;
-                        // dy = 0;
                     }
                     Keycode::Up => {
                         dy = -CUBE_SPEED;
-                        // dx = 0;
                     }
                     Keycode::Down => {
                         dy = CUBE_SPEED;
-                        // dx = 0;
                     }
                     _ => {}
                 },
