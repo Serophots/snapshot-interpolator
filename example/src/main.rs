@@ -12,10 +12,10 @@ use std::{
 };
 
 #[derive(Clone)]
-pub struct Position {
+struct Position {
     x: f64,
     y: f64,
-    remote_time: u64,
+    remote_time: f64,
 }
 
 impl snapshot::Snapshot for Position {
@@ -23,25 +23,89 @@ impl snapshot::Snapshot for Position {
         Position {
             x: snapshot::lerp(from.x, to.x, t),
             y: snapshot::lerp(from.y, to.y, t),
-            remote_time: 0,
+            remote_time: 0.0,
         }
     }
 
     fn remote_time(&self) -> f64 {
-        self.remote_time as f64
+        self.remote_time
     }
 }
 
-pub static SETTINGS: LazyLock<snapshot::Settings> = LazyLock::new(|| snapshot::Settings {
+static SETTINGS: LazyLock<snapshot::Settings> = LazyLock::new(|| snapshot::Settings {
     // playback_clamp_periods: 3.0,
-    // playback_fast_speed: 1.0 + 0.1,
-    // playback_slow_speed: 1.0 - 0.1,
-    // dynamic_playback_time: false,
+    // playback_fast_speed: 1.0 + 0.02,
+    // playback_slow_speed: 1.0 - 0.02,
+    dynamic_playback_time: false,
     // playback_offset_periods: 0.2,
     ..Default::default()
 });
 
-pub fn main() {
+#[allow(dead_code)]
+enum NetState {
+    Instant,
+    Good,
+    Fair,
+    Far,
+    Poor,
+}
+
+const NET_STATE: NetState = NetState::Poor;
+
+impl NetState {
+    fn sample_ping<R: Rng + ?Sized>(&self, rng: &mut R) -> f64 {
+        match self {
+            NetState::Instant => 0.0,
+            NetState::Good => Normal::new(10.0, 2.0).unwrap().sample(rng),
+            NetState::Fair => Normal::new(80.0, 20.0).unwrap().sample(rng),
+            NetState::Far => Normal::new(250.0, 60.0).unwrap().sample(rng),
+            NetState::Poor => Normal::new(300.0, 150.0).unwrap().sample(rng),
+        }
+    }
+
+    fn droprate(&self) -> f64 {
+        match self {
+            NetState::Instant => 0.0,
+            NetState::Good => 0.001,
+            NetState::Fair => 0.005,
+            NetState::Far => 0.015,
+            NetState::Poor => 0.2,
+        }
+    }
+}
+
+fn main() {
+    snapshot_example();
+
+    // test_clock_drift();
+}
+
+#[allow(dead_code)]
+fn test_clock_drift() {
+    let start = Instant::now();
+
+    let mut playback_time = 0.0;
+    let mut last_net = Instant::now();
+
+    loop {
+        let now = Instant::now();
+        let elapsed = now.duration_since(last_net);
+        if elapsed >= Duration::from_millis(16) {
+            last_net = now;
+            playback_time += elapsed.as_secs_f64();
+
+            println!(
+                "in {}s delta {}ms",
+                start.elapsed().as_secs(),
+                (start.elapsed().as_secs_f64() - playback_time) * 1000.0
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn snapshot_example() {
     let mut buf = snapshot::Buffer::<Position>::new(&*SETTINGS);
     let mut play = snapshot::Playback::new(&buf);
 
@@ -49,7 +113,7 @@ pub fn main() {
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
-        .window("rust-sdl3 demo", 800, 600)
+        .window("snapshot interpolation demo", 800, 600)
         .position_centered()
         .build()
         .unwrap();
@@ -63,7 +127,7 @@ pub fn main() {
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     const CUBE_SIZE: i32 = 50;
-    const CUBE_SPEED: i32 = 3;
+    const CUBE_SPEED: f32 = 3.0;
 
     let mut green_rect = Rect::new(0, 0, CUBE_SIZE as u32, CUBE_SIZE as u32);
     let mut red_rect = Rect::new(
@@ -72,20 +136,16 @@ pub fn main() {
         CUBE_SIZE as u32,
         CUBE_SIZE as u32,
     );
-    let mut dx: i32 = 0;
-    let mut dy: i32 = 0;
+    let mut dx: f32 = 0.0;
+    let mut dy: f32 = 0.0;
 
     let start = Instant::now();
     let mut last_snapshot_send = Instant::now();
-    let mut delta_time = Instant::now();
+    let mut last_step_time = Instant::now();
 
     let mut pipeline_snapshots = Vec::new();
 
     let mut rng = rand::rng();
-    let mut none_ping = Normal::new(0.0, 0.0).unwrap();
-    let mut best_ping = Normal::new(80.0, 0.0).unwrap();
-    let mut good_ping = Normal::new(80.0, 40.0).unwrap();
-    let mut bad_ping = Normal::new(200.0, 170.0).unwrap();
 
     'running: loop {
         for event in event_pump.poll_iter() {
@@ -123,14 +183,17 @@ pub fn main() {
         }
 
         // Update cube position
-        red_rect.x += dx;
-        red_rect.y += dy;
+        red_rect.x += dx as i32;
+        red_rect.y += dy as i32;
 
-        if let Some(pos) = play.step(delta_time.elapsed().as_millis() as f64, &buf) {
+        let now = Instant::now();
+        let delta_time = now.duration_since(last_step_time);
+        last_step_time = now;
+
+        if let Some(pos) = play.step(delta_time.as_secs_f64(), &buf) {
             green_rect.x = pos.x.round() as i32;
             green_rect.y = pos.y.round() as i32;
         }
-        delta_time = Instant::now();
 
         // Implement bouncing behavior for the red cube
         if red_rect.x < 0 {
@@ -162,17 +225,17 @@ pub fn main() {
 
         for _ in 0..4 {
             // Send a snapshot of the cube's position
-            if last_snapshot_send.elapsed().as_millis() >= SETTINGS.period as u128 {
+            if last_snapshot_send.elapsed().as_secs_f64() >= SETTINGS.period {
                 last_snapshot_send = Instant::now();
                 // Simulate the remote sending a snapshot
                 pipeline_snapshots.push((
                     Position {
                         x: red_rect.x as f64,
                         y: red_rect.y as f64,
-                        remote_time: start.elapsed().as_millis() as u64,
+                        remote_time: start.elapsed().as_secs_f64(),
                     },
                     Instant::now(),
-                    Duration::from_millis(good_ping.sample(&mut rng) as u64),
+                    Duration::from_millis(NET_STATE.sample_ping(&mut rng) as u64),
                 ));
             }
 
@@ -180,8 +243,7 @@ pub fn main() {
                 if snapshot.1.elapsed() >= snapshot.2 {
                     // Simulate the local client receiving this snapshot
 
-                    if rng.random_bool(0.95) {
-                        //drop rate
+                    if !rng.random_bool(NET_STATE.droprate()) {
                         buf.insert_snapshot(snapshot.0.clone());
                     }
 
@@ -191,36 +253,37 @@ pub fn main() {
                 true
             });
 
-            ::std::thread::sleep(Duration::from_millis(1));
+            ::std::thread::sleep(Duration::from_millis(2));
         }
 
         println!(
-            "db_extrapolating {} (0 is healthy)",
-            play.db_extrapolating_ema.value.unwrap_or_default()
+            "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
+            (play.db_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
         );
         println!(
-            "db_clamping      {} (0 is healthy)",
-            play.db_clamping_ema.value.unwrap_or_default()
+            "dbg_clamping      {} (GOOD 0 - 10 BAD)",
+            (play.db_clamping_ema.value.unwrap_or_default() * 10.0).round()
         );
         println!(
-            "db_scaling       {} (0 is healthy)",
-            play.db_scaling_ema.value.unwrap_or_default()
+            "dbg_scaling       {} (GOOD 0 - 10 BAD)",
+            (play.db_scaling_ema.value.unwrap_or_default() * 10.0).round()
         );
         println!(
-            "catchup time  ({} <=) {} (<= {}) - targets 0 ms (time scaling: {} - {})",
-            -SETTINGS.playback_clamp().round(),
-            play.catchup_time.value.unwrap_or_default().round(),
-            SETTINGS.playback_clamp().round(),
-            SETTINGS.slow_threshold().round(),
-            SETTINGS.fast_threshold().round(),
+            "catchup time  ({} <=) {}ms (<= {}) - targets 0 ms (time scaling: {} - {})",
+            -(SETTINGS.playback_clamp() * 1000.0),
+            (play.catchup_time.value.unwrap_or_default() * 1000.0).round(),
+            SETTINGS.playback_clamp() * 1000.0,
+            SETTINGS.slow_threshold() * 1000.0,
+            SETTINGS.fast_threshold() * 1000.0,
         );
-        println!("playback time   {}", buf.dynamic_playback_offset().round());
         println!(
-            "remote delt  {} - targets 200ms + latency (+ frame time)",
-            buf.remote_delta_time.value.unwrap_or_default().round()
+            "dyn playback time {}ms",
+            (buf.dynamic_playback_offset() * 1000.0).round()
         );
-        println!("timescale     {}", play.timescale,);
-
-        ::std::thread::sleep(Duration::from_millis(4));
+        println!(
+            "remote delta time {}ms - targets time period + latency (+ frame time)",
+            (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
+        );
+        println!("timescale     {}", play.timescale);
     }
 }

@@ -2,12 +2,13 @@ use std::sync::LazyLock;
 
 #[derive(Clone)]
 pub struct Settings {
-    /// Largest size of the buffer which stores snapshots
-    pub buf_size: usize,
+    /// The number of seconds worth of packets to store in the
+    /// buffer
+    pub buf_duration: f32,
 
-    /// The number of milliseconds between the server sending
+    /// The time period (seconds) between the server sending
     /// any two snapshots.
-    pub period: i64,
+    pub period: f64,
 
     /// Dynamically adjust the playback offset to adjust for measured
     /// network jitter. i.e. When the network becomes jittery slow the
@@ -44,8 +45,8 @@ pub static SNAPSHOT_SETTINGS_DEFAULT: LazyLock<Settings> = LazyLock::new(|| Sett
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            buf_size: 32,
-            period: 200,
+            buf_duration: 2.0,
+            period: 200.0 / 1000.0, // T = 200ms
 
             dynamic_playback_time: true,
             dynamic_playback_jitter_duration: 2.0,
@@ -56,7 +57,7 @@ impl Default for Settings {
             playback_slow_periods: -0.5,
             playback_slow_speed: 1.0 - 0.04,
 
-            playback_offset_periods: 2.0,
+            playback_offset_periods: 1.0,
         }
     }
 }
@@ -80,6 +81,6 @@ impl Settings {
 
     /// Packets per Second (dispatched by the remote)
     pub fn send_rate(&self) -> f64 {
-        1.0 / (self.period as f64 / 1000.0)
+        1.0 / (self.period as f64)
     }
 }

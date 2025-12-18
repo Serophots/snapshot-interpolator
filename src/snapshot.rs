@@ -1,9 +1,9 @@
 use num_traits::{Euclid, Float};
 
-pub trait Snapshot {
+pub trait Snapshot: Clone {
     fn interpolate(t: f64, from: &Self, to: &Self) -> Self;
 
-    /// Indicate the time, in milliseconds, at which this packet was
+    /// Indicate the time, in seconds, at which this packet was
     /// constructed by the remote. Only used to track the passing of
     /// the remote's time, so from which point this is measured doesn't
     /// matter, so long as it's consistent.

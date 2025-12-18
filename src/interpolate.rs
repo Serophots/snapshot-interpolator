@@ -16,6 +16,7 @@ pub struct Buffer<T> {
     settings: &'static Settings,
 
     pub(crate) buf: VecDeque<T>,
+    buf_len: usize,
 
     last_remote_time: f64,
     last_remote_instant: Instant,
@@ -42,6 +43,7 @@ pub struct Playback<T> {
     remote_counter: u128,
 
     /// Aims to be remote_time - BUF_OFFSET
+    /// (seconds)
     pub playback_time: f64,
 
     /// Rate at which time passes in order to maintain
@@ -73,12 +75,15 @@ pub struct Playback<T> {
 
 impl<T: Snapshot> Buffer<T> {
     pub fn new(settings: &'static Settings) -> Self {
-        let send_rate = 1.0 / (settings.period as f64 / 1000.0);
+        let send_rate = settings.send_rate();
+        let buf_len = (send_rate as f32 * settings.buf_duration).ceil() as usize;
 
         Self {
             settings,
 
-            buf: VecDeque::with_capacity(settings.buf_size),
+            buf: VecDeque::with_capacity(buf_len),
+            buf_len,
+
             last_remote_time: 0.0,
             last_remote_instant: Instant::now(),
             last_remote_counter: 0,
@@ -116,6 +121,7 @@ impl<T: Snapshot> Buffer<T> {
 
     /// Compute the playback offset dynamically to adjust for
     /// measured network jitter. Exposed publically for debugging.
+    /// (seconds)
     pub fn dynamic_playback_offset(&self) -> f64 {
         let playback_offset = self.settings.playback_offset() as f64;
 
@@ -146,14 +152,14 @@ impl<T: Snapshot> Buffer<T> {
             .position(|b| b.remote_time() < item.remote_time())
         {
             self.buf.insert(position, item);
-
-            if self.buf.len() > self.settings.buf_size {
-                self.buf.pop_back();
-            }
         } else if self.buf.is_empty() {
             self.buf.insert(0, item);
         } else {
-            // tracing::debug!("packet too old");
+            self.buf.push_back(item);
+        }
+
+        if self.buf.len() > self.buf_len {
+            self.buf.pop_back();
         }
     }
 }
@@ -194,6 +200,11 @@ impl<T: Snapshot> Playback<T> {
             .position(|b| b.remote_time() < self.playback_time);
         let mut extrapolating = 0.0;
         let snapshots = match ss_from_pos {
+            None => {
+                // There isn't any packet in the buffer which arrived before the playback time
+                extrapolating = 1.0;
+                None
+            }
             Some(0) => {
                 extrapolating = 1.0;
 
@@ -223,7 +234,6 @@ impl<T: Snapshot> Playback<T> {
                     _ => None,
                 }
             }
-            _ => None,
         };
 
         // A new network packet has arrived into the buffer
@@ -234,20 +244,22 @@ impl<T: Snapshot> Playback<T> {
             let remote_time = buf.last_remote_time
                 // Account for any time which has passed since we, the local client, first
                 // saw this packet arrive in the buffer.
-                + buf.last_remote_instant.elapsed().as_millis() as f64;
+                + buf.last_remote_instant.elapsed().as_secs_f64();
             let playback_target_time = remote_time - playback_offset;
+            {
+                let min = playback_target_time - playback_clamp;
+                let max = playback_target_time + playback_clamp;
 
-            let last_playback_time = self.playback_time;
-            self.playback_time = self.playback_time.clamp(
-                playback_target_time - playback_clamp,
-                playback_target_time + playback_clamp,
-            );
-
-            if self.playback_time == last_playback_time {
-                self.db_clamping_ema.add(0.0);
-            } else {
-                self.db_clamping_ema.add(1.0);
-            }
+                if self.playback_time < min {
+                    self.playback_time = min;
+                    self.db_clamping_ema.add(1.0);
+                } else if self.playback_time > max {
+                    self.playback_time = max;
+                    self.db_clamping_ema.add(1.0);
+                } else {
+                    self.db_clamping_ema.add(0.0);
+                }
+            };
             self.db_extrapolating_ema.add(extrapolating);
 
             // 4. Add catchup time to moving average
@@ -270,7 +282,9 @@ impl<T: Snapshot> Playback<T> {
 
             Some(Snapshot::interpolate(t.clamp(0.0, 2.5), ss_from, ss_to))
         } else {
-            None
+            // There isn't any packet in the buffer which arrived before the playback time
+
+            buf.latest().cloned()
         }
     }
 
