@@ -164,6 +164,20 @@ impl<T: Snapshot> Buffer<T> {
     }
 }
 
+impl<T: Clone> Clone for Buffer<T> {
+    fn clone(&self) -> Self {
+        Self {
+            settings: self.settings,
+            buf: self.buf.clone(),
+            buf_len: self.buf_len.clone(),
+            last_remote_time: self.last_remote_time.clone(),
+            last_remote_instant: self.last_remote_instant.clone(),
+            last_remote_counter: self.last_remote_counter.clone(),
+            remote_delta_time: self.remote_delta_time.clone(),
+        }
+    }
+}
+
 impl<T: Snapshot> Playback<T> {
     pub fn new(buf: &Buffer<T>) -> Self {
         let settings = buf.settings;
