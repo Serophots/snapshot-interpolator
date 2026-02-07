@@ -33,6 +33,7 @@ pub fn lerp<F: Float>(a: F, b: F, t: F) -> F {
     a + (t * (b - a))
 }
 
+/// Map the range [a,b] -> [c,d] linearly
 pub fn linear_map<F: Float>(x: F, a: F, b: F, c: F, d: F) -> F {
     c + (x - a) * (d - c) / (b - a)
 }
@@ -48,6 +49,9 @@ mod tests {
         assert_eq!(linear_map(3000.0, -3000.0, 3000.0, 0.0, 1.0), 1.0);
         assert_eq!(linear_map(6000.0, -3000.0, 3000.0, 0.0, 1.0), 1.5);
         assert_eq!(linear_map(6000.0, 0.0, 3000.0, 0.0, 1.0), 2.0);
+        assert_eq!(linear_map(3000.0, 3000.0, 6000.0, 0.0, 1.0), 0.0);
+        assert_eq!(linear_map(4500.0, 3000.0, 6000.0, 0.0, 1.0), 0.5);
+        assert_eq!(linear_map(6000.0, 3000.0, 6000.0, 0.0, 1.0), 1.0);
     }
 
     #[test]
