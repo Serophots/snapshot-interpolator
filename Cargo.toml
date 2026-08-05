@@ -1,5 +1,5 @@
 [package]
-name = "snapshot"
+name = "snapshot-interpolator"
 description = "Facilitates the smooth realtime playback of snapshots which have been inserted into a buffer out-of-order, with latency or with jitter."
 version = "1.0.0"
 edition = "2024"

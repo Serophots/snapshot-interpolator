@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "snapshot"
+name = "snapshot-interpolator"
 version = "1.0.0"
 dependencies = [
  "num-traits",
