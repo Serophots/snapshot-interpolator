@@ -203,30 +203,29 @@ impl<T: Snapshot> Playback<T> {
         }
     }
 
-    /// Draw a new interpolated snapshot by passing in how much time
-    /// has passed since the last step (seconds).
-    pub fn step(&mut self, delta_time: f64, buf: &Buffer<T>) -> Option<T> {
-        let playback_offset = buf.dynamic_playback_offset();
-        let playback_clamp = self.settings.playback_clamp() as f64;
-
-        // 1. Step playback time
-        self.playback_time += delta_time * self.timescale;
-
-        // 2. Find the packets between which to interpolate (for later)
+    /// Return the two snapshots between which the current playback
+    /// time will be interpolating (or, indeed, extrapolating) between.
+    /// (This is primarily used internally)
+    pub fn interpolating_between<'a>(
+        &'_ self,
+        buf: &'a Buffer<T>,
+    ) -> Option<InterpolatingBetween<'a, T>> {
         let ss_from_pos = buf
             .buf
             .iter()
             .position(|b| b.remote_time() < self.playback_time);
-        let mut extrapolating = 0.0;
-        let snapshots = match ss_from_pos {
+
+        match ss_from_pos {
             None => {
                 // There isn't any packet in the buffer which arrived before the playback time
-                extrapolating = 1.0;
+                // (extrapolating = true)
                 None
             }
             Some(0) => {
-                extrapolating = 1.0;
+                // (extrapolating = true)
 
+                // Take the top two packets as the interpolation points,
+                // noting that time t will be outside of 0.0 - 1.0
                 let ss_to = buf.buf.get(0);
                 let ss_from = buf.buf.get(1);
                 match (ss_from, ss_to) {
@@ -234,7 +233,11 @@ impl<T: Snapshot> Playback<T> {
                         debug_assert!(self.playback_time >= ss_from.remote_time());
                         debug_assert!(self.playback_time >= ss_to.remote_time());
 
-                        Some((ss_from, ss_to))
+                        Some(InterpolatingBetween {
+                            from: ss_from,
+                            to: ss_to,
+                            extrapolating: true,
+                        })
                     }
                     _ => None,
                 }
@@ -248,14 +251,45 @@ impl<T: Snapshot> Playback<T> {
                         debug_assert!(self.playback_time <= ss_to.remote_time());
                         debug_assert!(self.playback_time >= ss_from.remote_time());
 
-                        Some((ss_from, ss_to))
+                        Some(InterpolatingBetween {
+                            from: ss_from,
+                            to: ss_to,
+                            extrapolating: false,
+                        })
                     }
-                    _ => None,
+                    _ => {
+                        // Unreachable, I believe
+                        None
+                    }
                 }
             }
+        }
+    }
+
+    /// Draw a new interpolated snapshot by passing in how much time
+    /// has passed since the last step (seconds).
+    pub fn step(&mut self, delta_time: f64, buf: &Buffer<T>) -> Option<T> {
+        let playback_offset = buf.dynamic_playback_offset();
+        let playback_clamp = self.settings.playback_clamp() as f64;
+
+        // 1. Step playback time
+        self.playback_time += delta_time * self.timescale;
+
+        // 2. Find the packets between which to interpolate (for later)
+        let snapshots = self.interpolating_between(buf);
+        let extrapolating = if snapshots
+            .as_ref()
+            .map(|ss| ss.extrapolating)
+            .unwrap_or(true)
+        {
+            1.0
+        } else {
+            0.0
         };
 
         // A new network packet has arrived into the buffer
+        // since our last step. Use this as an opportunity
+        // to re-evaluate our time scale & acceleration.
         if self.remote_counter != buf.last_remote_counter {
             self.remote_counter = buf.last_remote_counter;
 
@@ -290,7 +324,12 @@ impl<T: Snapshot> Playback<T> {
         }
 
         // 6. Interpolate
-        if let Some((ss_from, ss_to)) = snapshots {
+        if let Some(InterpolatingBetween {
+            from: ss_from,
+            to: ss_to,
+            extrapolating: _,
+        }) = snapshots
+        {
             let t = linear_map(
                 self.playback_time,
                 ss_from.remote_time(),
@@ -307,7 +346,7 @@ impl<T: Snapshot> Playback<T> {
         }
     }
 
-    pub fn timescale(&mut self, catchup_time: f64) -> f64 {
+    fn timescale(&mut self, catchup_time: f64) -> f64 {
         if catchup_time < self.settings.slow_threshold() as f64 {
             self.db_scaling_ema.add(1.0);
             return self.settings.playback_slow_speed as f64;
@@ -321,4 +360,10 @@ impl<T: Snapshot> Playback<T> {
         self.db_scaling_ema.add(0.0);
         1.0
     }
+}
+
+pub struct InterpolatingBetween<'a, T> {
+    from: &'a T,
+    to: &'a T,
+    extrapolating: bool,
 }
