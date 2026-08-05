@@ -94,9 +94,14 @@ impl<T: Snapshot> Buffer<T> {
         }
     }
 
-    /// Retrieve the latest snapshot
-    pub fn latest(&self) -> Option<&T> {
+    /// Retrieve the most recent snapshot
+    pub fn front(&self) -> Option<&T> {
         self.buf.front()
+    }
+
+    /// Retrieve the least recent snapshot that's still in the buffer
+    pub fn back(&self) -> Option<&T> {
+        self.buf.back()
     }
 
     /// Insert a new snapshot from the net
@@ -298,7 +303,7 @@ impl<T: Snapshot> Playback<T> {
         } else {
             // There isn't any packet in the buffer which arrived before the playback time
 
-            buf.latest().cloned()
+            buf.front().cloned()
         }
     }
 
