@@ -363,7 +363,7 @@ impl<T: Snapshot> Playback<T> {
 }
 
 pub struct InterpolatingBetween<'a, T> {
-    from: &'a T,
-    to: &'a T,
-    extrapolating: bool,
+    pub from: &'a T,
+    pub to: &'a T,
+    pub extrapolating: bool,
 }
