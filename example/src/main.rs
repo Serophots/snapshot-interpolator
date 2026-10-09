@@ -1,7 +1,8 @@
 extern crate sdl3;
 
 use rand::Rng;
-use rand_distr::{Distribution, Normal};
+use rand_distr::{Distribution, Weibull};
+
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::pixels::Color;
@@ -10,6 +11,75 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
+
+#[derive(clap::Parser)]
+#[command(author, version, about)]
+pub struct Args {
+    #[clap(subcommand)]
+    pub profile: NetConditionsProfileEnum,
+}
+
+struct NetConditionsState {
+    ping_distr: Weibull<f64>,
+    droprate: f64,
+}
+
+struct NetConditionsProfile {
+    baseline_ms: f64,
+    shape: f64,
+    mean_jitter_ms: f64,
+    droprate: f64,
+}
+
+#[derive(Copy, Clone, clap::Subcommand)]
+enum NetConditionsProfileEnum {
+    Good,
+    Decent,
+    Poor,
+}
+
+const PROFILE_GOOD: NetConditionsProfile = NetConditionsProfile {
+    baseline_ms: 15.0,
+    shape: 2.0,
+    mean_jitter_ms: 2.0,
+    droprate: 0.001,
+};
+
+const PROFILE_DECENT: NetConditionsProfile = NetConditionsProfile {
+    baseline_ms: 40.0,
+    shape: 1.5,
+    mean_jitter_ms: 8.0,
+    droprate: 0.01,
+};
+
+const PROFILE_POOR: NetConditionsProfile = NetConditionsProfile {
+    baseline_ms: 80.0,
+    shape: 1.2,
+    mean_jitter_ms: 20.0,
+    droprate: 0.03,
+};
+
+impl From<NetConditionsProfile> for NetConditionsState {
+    fn from(value: NetConditionsProfile) -> Self {
+        let scale =
+            value.mean_jitter_ms / statrs::function::gamma::gamma(1.0 + (1.0 / value.shape));
+
+        NetConditionsState {
+            ping_distr: Weibull::new(scale, value.shape).unwrap(),
+            droprate: value.droprate,
+        }
+    }
+}
+
+impl NetConditionsState {
+    pub fn sample_ping<R: Rng>(&mut self, rng: &mut R) -> f64 {
+        self.ping_distr.sample(rng)
+    }
+
+    pub fn sample_drop<R: Rng>(&mut self, rng: &mut R) -> bool {
+        rng.random_bool(self.droprate)
+    }
+}
 
 #[derive(Clone)]
 struct Position {
@@ -36,41 +106,27 @@ static SETTINGS: LazyLock<snapshot::Settings> = LazyLock::new(|| snapshot::Setti
     ..Default::default()
 });
 
-#[allow(dead_code)]
-enum NetState {
-    Instant,
-    Good,
-    Fair,
-    Far,
-    Poor,
-}
-
-const NET_STATE: NetState = NetState::Poor;
-
-impl NetState {
-    fn sample_ping<R: Rng + ?Sized>(&self, rng: &mut R) -> f64 {
-        match self {
-            NetState::Instant => 0.0,
-            NetState::Good => Normal::new(10.0, 2.0).unwrap().sample(rng),
-            NetState::Fair => Normal::new(80.0, 20.0).unwrap().sample(rng),
-            NetState::Far => Normal::new(250.0, 60.0).unwrap().sample(rng),
-            NetState::Poor => Normal::new(300.0, 150.0).unwrap().sample(rng),
-        }
-    }
-
-    fn droprate(&self) -> f64 {
-        match self {
-            NetState::Instant => 0.0,
-            NetState::Good => 0.001,
-            NetState::Fair => 0.005,
-            NetState::Far => 0.015,
-            NetState::Poor => 0.2,
-        }
-    }
-}
-
 fn main() {
-    snapshot_example();
+    let args = <Args as clap::Parser>::parse();
+
+    let net_conditions_profile = match args.profile {
+        NetConditionsProfileEnum::Good => PROFILE_GOOD,
+        NetConditionsProfileEnum::Decent => PROFILE_DECENT,
+        NetConditionsProfileEnum::Poor => PROFILE_POOR,
+    };
+
+    let window_title = format!(
+        "Snapshot Interpolation Demo: Net conditions {}",
+        match args.profile {
+            NetConditionsProfileEnum::Good => "GOOD (17ms +- 1ms)",
+            NetConditionsProfileEnum::Decent => "DECENT (48ms +- 6ms)",
+            NetConditionsProfileEnum::Poor => "POOR (100ms +- 17ms)",
+        }
+    );
+
+    let mut net_conditions = NetConditionsState::from(net_conditions_profile);
+
+    snapshot_example(&window_title, &mut net_conditions);
 
     // test_clock_drift();
 }
@@ -100,7 +156,7 @@ fn test_clock_drift() {
     }
 }
 
-fn snapshot_example() {
+fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
     let mut buf = snapshot::Buffer::<Position>::new(&*SETTINGS);
     let mut play = snapshot::Playback::new(&buf);
 
@@ -108,7 +164,7 @@ fn snapshot_example() {
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
-        .window("snapshot interpolation demo", 800, 600)
+        .window(title, 800, 600)
         .position_centered()
         .build()
         .unwrap();
@@ -226,7 +282,7 @@ fn snapshot_example() {
                         remote_time: start.elapsed().as_secs_f64(),
                     },
                     Instant::now(),
-                    Duration::from_millis(NET_STATE.sample_ping(&mut rng) as u64),
+                    Duration::from_millis(net_conditions.sample_ping(&mut rng) as u64),
                 ));
             }
 
@@ -234,7 +290,7 @@ fn snapshot_example() {
                 if snapshot.1.elapsed() >= snapshot.2 {
                     // Simulate the local client receiving this snapshot
 
-                    if !rng.random_bool(NET_STATE.droprate()) {
+                    if !net_conditions.sample_drop(&mut rng) {
                         buf.insert_snapshot(snapshot.0.clone());
                     }
 
@@ -247,34 +303,34 @@ fn snapshot_example() {
             ::std::thread::sleep(Duration::from_millis(2));
         }
 
-        println!(
-            "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
-            (play.db_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
-        );
-        println!(
-            "dbg_clamping      {} (GOOD 0 - 10 BAD)",
-            (play.db_clamping_ema.value.unwrap_or_default() * 10.0).round()
-        );
-        println!(
-            "dbg_scaling       {} (GOOD 0 - 10 BAD)",
-            (play.db_scaling_ema.value.unwrap_or_default() * 10.0).round()
-        );
-        println!(
-            "catchup time  ({} <=) {}ms (<= {}) - targets 0 ms (time scaling: {} - {})",
-            -(SETTINGS.playback_clamp() * 1000.0),
-            (play.catchup_time.value.unwrap_or_default() * 1000.0).round(),
-            SETTINGS.playback_clamp() * 1000.0,
-            SETTINGS.slow_threshold() * 1000.0,
-            SETTINGS.fast_threshold() * 1000.0,
-        );
-        println!(
-            "dyn playback time {}ms",
-            (buf.dynamic_playback_offset() * 1000.0).round()
-        );
-        println!(
-            "remote delta time {}ms - targets time period + latency (+ frame time)",
-            (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
-        );
-        println!("timescale     {}", play.timescale);
+        //         println!(
+        //             "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
+        //             (play.db_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
+        //         );
+        //         println!(
+        //             "dbg_clamping      {} (GOOD 0 - 10 BAD)",
+        //             (play.db_clamping_ema.value.unwrap_or_default() * 10.0).round()
+        //         );
+        //         println!(
+        //             "dbg_scaling       {} (GOOD 0 - 10 BAD)",
+        //             (play.db_scaling_ema.value.unwrap_or_default() * 10.0).round()
+        //         );
+        //         println!(
+        //             "catchup time  ({} <=) {}ms (<= {}) - targets 0 ms (time scaling: {} - {})",
+        //             -(SETTINGS.playback_clamp() * 1000.0),
+        //             (play.catchup_time.value.unwrap_or_default() * 1000.0).round(),
+        //             SETTINGS.playback_clamp() * 1000.0,
+        //             SETTINGS.slow_threshold() * 1000.0,
+        //             SETTINGS.fast_threshold() * 1000.0,
+        //         );
+        //         println!(
+        //             "dyn playback time {}ms",
+        //             (buf.dynamic_playback_offset() * 1000.0).round()
+        //         );
+        //         println!(
+        //             "remote delta time {}ms - targets time period + latency (+ frame time)",
+        //             (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
+        //         );
+        //         println!("timescale     {}", play.timescale);
     }
 }
