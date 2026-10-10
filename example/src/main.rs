@@ -156,6 +156,16 @@ fn test_clock_drift() {
     }
 }
 
+const WINDOW_WIDTH: u32 = 800;
+const WINDOW_HEIGHT: u32 = 600;
+const CUBE_SIZE: i32 = 50;
+const CUBE_SPEED: f32 = 3.0;
+
+// const WINDOW_WIDTH: u32 = 300;
+// const WINDOW_HEIGHT: u32 = 200;
+// const CUBE_SIZE: i32 = 50;
+// const CUBE_SPEED: f32 = 1.5;
+
 fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
     let mut buf = snapshot::Buffer::<Position>::new(&*SETTINGS);
     let mut play = snapshot::Playback::new(&buf);
@@ -164,7 +174,7 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
-        .window(title, 800, 600)
+        .window(title, WINDOW_WIDTH, WINDOW_HEIGHT)
         .position_centered()
         .build()
         .unwrap();
@@ -177,13 +187,10 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
 
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    const CUBE_SIZE: i32 = 50;
-    const CUBE_SPEED: f32 = 3.0;
-
     let mut green_rect = Rect::new(0, 0, CUBE_SIZE as u32, CUBE_SIZE as u32);
     let mut red_rect = Rect::new(
-        (800 - CUBE_SIZE) / 2,
-        (600 - CUBE_SIZE) / 2,
+        (WINDOW_WIDTH as i32 - CUBE_SIZE) / 2,
+        (WINDOW_HEIGHT as i32 - CUBE_SIZE) / 2,
         CUBE_SIZE as u32,
         CUBE_SIZE as u32,
     );
@@ -230,8 +237,12 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
         }
 
         // Update cube position
-        red_rect.x += dx as i32;
-        red_rect.y += dy as i32;
+        // red_rect.x += dx as i32;
+        // red_rect.y += dy as i32;
+        red_rect.x = (WINDOW_WIDTH as i32 / 2)
+            + (220.0 * (start.elapsed().as_millis() as f64 / 1000.0).sin()) as i32;
+        red_rect.y = (WINDOW_HEIGHT as i32 / 2)
+            + (220.0 * (start.elapsed().as_millis() as f64 / 1000.0).cos()) as i32;
 
         let now = Instant::now();
         let delta_time = now.duration_since(last_step_time);
@@ -243,21 +254,21 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
         }
 
         // Implement bouncing behavior for the red cube
-        if red_rect.x < 0 {
-            red_rect.x = 0;
-            dx = -dx;
-        } else if red_rect.x > 800 - CUBE_SIZE {
-            red_rect.x = 800 - CUBE_SIZE;
-            dx = -dx;
-        }
+        // if red_rect.x < 0 {
+        //     red_rect.x = 0;
+        //     dx = -dx;
+        // } else if red_rect.x > WINDOW_WIDTH as i32 - CUBE_SIZE {
+        //     red_rect.x = WINDOW_WIDTH as i32 - CUBE_SIZE;
+        //     dx = -dx;
+        // }
 
-        if red_rect.y < 0 {
-            red_rect.y = 0;
-            dy = -dy;
-        } else if red_rect.y > 600 - CUBE_SIZE {
-            red_rect.y = 600 - CUBE_SIZE;
-            dy = -dy;
-        }
+        // if red_rect.y < 0 {
+        //     red_rect.y = 0;
+        //     dy = -dy;
+        // } else if red_rect.y > WINDOW_HEIGHT as i32 - CUBE_SIZE {
+        //     red_rect.y = WINDOW_HEIGHT as i32 - CUBE_SIZE;
+        //     dy = -dy;
+        // }
 
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
@@ -300,37 +311,37 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
                 true
             });
 
-            ::std::thread::sleep(Duration::from_millis(2));
+            std::thread::sleep(Duration::from_millis(2));
         }
 
-        //         println!(
-        //             "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
-        //             (play.db_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
-        //         );
-        //         println!(
-        //             "dbg_clamping      {} (GOOD 0 - 10 BAD)",
-        //             (play.db_clamping_ema.value.unwrap_or_default() * 10.0).round()
-        //         );
-        //         println!(
-        //             "dbg_scaling       {} (GOOD 0 - 10 BAD)",
-        //             (play.db_scaling_ema.value.unwrap_or_default() * 10.0).round()
-        //         );
-        //         println!(
-        //             "catchup time  ({} <=) {}ms (<= {}) - targets 0 ms (time scaling: {} - {})",
-        //             -(SETTINGS.playback_clamp() * 1000.0),
-        //             (play.catchup_time.value.unwrap_or_default() * 1000.0).round(),
-        //             SETTINGS.playback_clamp() * 1000.0,
-        //             SETTINGS.slow_threshold() * 1000.0,
-        //             SETTINGS.fast_threshold() * 1000.0,
-        //         );
-        //         println!(
-        //             "dyn playback time {}ms",
-        //             (buf.dynamic_playback_offset() * 1000.0).round()
-        //         );
-        //         println!(
-        //             "remote delta time {}ms - targets time period + latency (+ frame time)",
-        //             (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
-        //         );
-        //         println!("timescale     {}", play.timescale);
+        // println!(
+        //     "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
+        //     (play.db_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
+        // );
+        // println!(
+        //     "dbg_clamping      {} (GOOD 0 - 10 BAD)",
+        //     (play.db_clamping_ema.value.unwrap_or_default() * 10.0).round()
+        // );
+        // println!(
+        //     "dbg_scaling       {} (GOOD 0 - 10 BAD)",
+        //     (play.db_scaling_ema.value.unwrap_or_default() * 10.0).round()
+        // );
+        // println!(
+        //     "catchup time  ({} <=) {}ms (<= {}) - targets 0 ms (time scaling: {} - {})",
+        //     -(SETTINGS.playback_clamp() * 1000.0),
+        //     (play.catchup_time.value.unwrap_or_default() * 1000.0).round(),
+        //     SETTINGS.playback_clamp() * 1000.0,
+        //     SETTINGS.slow_threshold() * 1000.0,
+        //     SETTINGS.fast_threshold() * 1000.0,
+        // );
+        // println!(
+        //     "dyn playback time {}ms",
+        //     (buf.dynamic_playback_offset() * 1000.0).round()
+        // );
+        // println!(
+        //     "remote delta time {}ms - targets time period + latency (+ frame time)",
+        //     (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
+        // );
+        // println!("timescale     {}", play.timescale);
     }
 }
