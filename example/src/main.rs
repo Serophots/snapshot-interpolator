@@ -14,9 +14,13 @@ use std::{
 
 #[derive(clap::Parser)]
 #[command(author, version, about)]
-pub struct Args {
+struct Args {
     #[clap(subcommand)]
-    pub profile: NetConditionsProfileEnum,
+    profile: NetConditionsProfileEnum,
+    #[arg(long)]
+    no_green_square: bool,
+    #[arg(long)]
+    no_smoothing: bool,
 }
 
 struct NetConditionsState {
@@ -126,7 +130,7 @@ fn main() {
 
     let mut net_conditions = NetConditionsState::from(net_conditions_profile);
 
-    snapshot_example(&window_title, &mut net_conditions);
+    snapshot_example(&window_title, &mut net_conditions, &args);
 
     // test_clock_drift();
 }
@@ -166,7 +170,7 @@ const CUBE_SPEED: f32 = 3.0;
 // const CUBE_SIZE: i32 = 50;
 // const CUBE_SPEED: f32 = 1.5;
 
-fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
+fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState, args: &Args) {
     let mut buf = snapshot::Buffer::<Position>::new(&*SETTINGS);
     let mut play = snapshot::Playback::new(&buf);
 
@@ -194,8 +198,6 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
         CUBE_SIZE as u32,
         CUBE_SIZE as u32,
     );
-    let mut dx: f32 = 0.0;
-    let mut dy: f32 = 0.0;
 
     let start = Instant::now();
     let mut last_snapshot_send = Instant::now();
@@ -213,32 +215,11 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
-                Event::KeyDown {
-                    keycode: Some(keycode),
-                    ..
-                } => match keycode {
-                    Keycode::Left => {
-                        dx = -CUBE_SPEED;
-                    }
-                    Keycode::Right => {
-                        dx = CUBE_SPEED;
-                    }
-                    Keycode::Up => {
-                        dy = -CUBE_SPEED;
-                    }
-                    Keycode::Down => {
-                        dy = CUBE_SPEED;
-                    }
-                    _ => {}
-                },
-
                 _ => {}
             }
         }
 
         // Update cube position
-        // red_rect.x += dx as i32;
-        // red_rect.y += dy as i32;
         red_rect.x = (WINDOW_WIDTH as i32 / 2)
             + (220.0 * (start.elapsed().as_millis() as f64 / 1000.0).sin()) as i32;
         red_rect.y = (WINDOW_HEIGHT as i32 / 2)
@@ -248,9 +229,16 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
         let delta_time = now.duration_since(last_step_time);
         last_step_time = now;
 
-        if let Some(pos) = play.step(delta_time.as_secs_f64(), &buf) {
-            green_rect.x = pos.x.round() as i32;
-            green_rect.y = pos.y.round() as i32;
+        if args.no_smoothing {
+            if let Some(pos) = buf.front() {
+                green_rect.x = pos.x.round() as i32;
+                green_rect.y = pos.y.round() as i32;
+            }
+        } else {
+            if let Some(pos) = play.step(delta_time.as_secs_f64(), &buf) {
+                green_rect.x = pos.x.round() as i32;
+                green_rect.y = pos.y.round() as i32;
+            }
         }
 
         // Implement bouncing behavior for the red cube
@@ -273,8 +261,10 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState) {
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
 
-        canvas.set_draw_color(Color::RGB(0, 255, 0));
-        canvas.fill_rect(green_rect).unwrap();
+        if !args.no_green_square {
+            canvas.set_draw_color(Color::RGB(0, 255, 0));
+            canvas.fill_rect(green_rect).unwrap();
+        }
 
         canvas.set_draw_color(Color::RGB(255, 0, 0));
         canvas.fill_rect(red_rect).unwrap();
