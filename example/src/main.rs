@@ -24,6 +24,7 @@ struct Args {
 }
 
 struct NetConditionsState {
+    ping_base: f64,
     ping_distr: Weibull<f64>,
     droprate: f64,
 }
@@ -69,6 +70,7 @@ impl From<NetConditionsProfile> for NetConditionsState {
             value.mean_jitter_ms / statrs::function::gamma::gamma(1.0 + (1.0 / value.shape));
 
         NetConditionsState {
+            ping_base: value.baseline_ms,
             ping_distr: Weibull::new(scale, value.shape).unwrap(),
             droprate: value.droprate,
         }
@@ -77,7 +79,7 @@ impl From<NetConditionsProfile> for NetConditionsState {
 
 impl NetConditionsState {
     pub fn sample_ping<R: Rng>(&mut self, rng: &mut R) -> f64 {
-        self.ping_distr.sample(rng)
+        self.ping_base + self.ping_distr.sample(rng)
     }
 
     pub fn sample_drop<R: Rng>(&mut self, rng: &mut R) -> bool {
