@@ -8,5 +8,16 @@ readme = "README.md"
 repository = "https://github.com/Serophots/snapshot-interpolator"
 keywords = ["gamedev", "network"]
 
+[lints.rust]
+unused_crate_dependencies = "warn"
+
+[lints.clippy]
+arithmetic_side_effects = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+panic = "warn"
+unwrap_used = "warn"
+unchecked_time_subtraction = "warn"
+
 [dependencies]
 num-traits = "0.2"

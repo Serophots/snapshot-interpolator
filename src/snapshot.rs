@@ -1,13 +1,14 @@
+use std::time::Duration;
+
 use num_traits::{Euclid, Float};
 
 pub trait Snapshot: Clone {
     fn interpolate(t: f64, from: &Self, to: &Self) -> Self;
 
-    /// Indicate the time, in seconds, at which this packet was
-    /// constructed by the remote. Only used to track the passing of
-    /// the remote's time, so from which point this is measured doesn't
-    /// matter, so long as it's consistent.
-    fn remote_time(&self) -> f64;
+    /// Indicate the duration of time between
+    /// - some unchanging reference point
+    /// - the time at which this snapshot was constructed by the remote sender.
+    fn remote_time(&self) -> Duration;
 }
 
 /// Interpolate an angle in degrees always taking the shortest distance around a circle

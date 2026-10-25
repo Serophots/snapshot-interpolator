@@ -101,8 +101,8 @@ impl snapshot::Snapshot for Position {
         }
     }
 
-    fn remote_time(&self) -> f64 {
-        self.remote_time
+    fn remote_time(&self) -> Duration {
+        Duration::from_secs_f64(self.remote_time)
     }
 }
 
@@ -235,7 +235,7 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState, args: 
                 green_rect.y = pos.y.round() as i32;
             }
         } else {
-            if let Some(pos) = play.step(delta_time.as_secs_f64(), &buf) {
+            if let Some(pos) = play.step(delta_time, &buf) {
                 green_rect.x = pos.x.round() as i32;
                 green_rect.y = pos.y.round() as i32;
             }
@@ -273,7 +273,7 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState, args: 
 
         for _ in 0..4 {
             // Send a snapshot of the cube's position
-            if last_snapshot_send.elapsed().as_secs_f64() >= SETTINGS.period {
+            if last_snapshot_send.elapsed() >= SETTINGS.period {
                 last_snapshot_send = Instant::now();
                 // Simulate the remote sending a snapshot
                 pipeline_snapshots.push((

@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::{SNAPSHOT_SETTINGS_DEFAULT, Snapshot};
 
     #[derive(Copy, Clone, Debug)]
@@ -13,14 +15,14 @@ mod tests {
             *to
         }
 
-        fn remote_time(&self) -> f64 {
-            self.time
+        fn remote_time(&self) -> Duration {
+            Duration::from_secs_f64(self.time)
         }
     }
 
     #[test]
     fn test_snapshot_insertion() {
-        let mut buf = crate::Buffer::new(&*SNAPSHOT_SETTINGS_DEFAULT);
+        let mut buf = crate::Buffer::new(&SNAPSHOT_SETTINGS_DEFAULT);
         // let mut play = snapshot::Playback::new(&buf);
 
         let one = TestSnapshot {

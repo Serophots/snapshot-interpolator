@@ -1,6 +1,10 @@
 // Based on Mirror for Unity's snapshot interpolation
 
-use std::{collections::VecDeque, marker::PhantomData, time::Instant};
+use std::{
+    collections::VecDeque,
+    marker::PhantomData,
+    time::{Duration, Instant},
+};
 
 use crate::{ExponentialMovingAverage, Settings, Snapshot, linear_map};
 
@@ -18,14 +22,16 @@ pub struct Buffer<T> {
     pub(crate) buf: VecDeque<T>,
     buf_len: usize,
 
-    last_remote_time: f64,
+    /// The remote time of the last packet received into the buffer
+    /// (So remote times are measured relative to some static point in time)
+    last_remote_time: Duration,
     last_remote_instant: Instant,
     last_remote_counter: u128,
 
     /// Measure the network jitter to dynamically adjust the playback
     /// offset.
     ///
-    /// A moving average of the time between the latest two packets
+    /// A moving average of the time (seconds) between the latest two packets
     pub remote_delta_time: ExponentialMovingAverage,
 }
 
@@ -42,41 +48,41 @@ pub struct Playback<T> {
 
     remote_counter: u128,
 
-    /// Aims to be remote_time - BUF_OFFSET
-    /// (seconds)
-    pub playback_time: f64,
+    /// Aims to be remote_time - dynamic_playback_offset()
+    pub playback_time: Duration,
 
-    /// Rate at which time passes in order to maintain
+    /// Rate at which playback time passes (relative to normal clock time)
+    /// in order to maintain that the playback_time matches the targetted playback time
+    /// i.e. we accelerate playback time if we fall behind the target,
+    /// and decelerate if we get too far ahead.
     pub timescale: f64,
 
-    /// Measure any drift between the local timescale and the remote timescale,
-    /// in order to accelerate/deccelerate the local timescale to get back on
-    /// track.
-    ///
-    /// A moving average of the difference between the actual playback time
-    /// and the targetted playback time (x periods behind the remote time)
+    /// Measures the difference between the actual playback time and
+    /// the targetted playback time, reported for every new packet.
+    /// We then use this to accelerate / decelerate the playback
+    /// in order to match the target. (Seconds)
     pub catchup_time: ExponentialMovingAverage,
 
     /// A debugging measure of how much the last 10 seconds
     /// have relied on extrapolation, between 1.0 - all, and
     /// 0.0 - none. (None is healthy)
-    pub db_extrapolating_ema: ExponentialMovingAverage,
+    pub dbg_extrapolating_ema: ExponentialMovingAverage,
 
     /// A debugging measure of how much the last 10 seconds
     /// have relied on clamping the local timescale, between
     /// 1.0 - all, and 0.0 - none. (None is healthy)
-    pub db_clamping_ema: ExponentialMovingAverage,
+    pub dbg_clamping_ema: ExponentialMovingAverage,
 
     /// A debugging measure of how much the last 10 seconds
     /// have relied on time scaling, between 1.0 - all, and
     /// 0.0 - none. (None is healthy, some is expected)
-    pub db_scaling_ema: ExponentialMovingAverage,
+    pub dbg_scaling_ema: ExponentialMovingAverage,
 }
 
 impl<T: Snapshot> Buffer<T> {
     pub fn new(settings: &'static Settings) -> Self {
         let send_rate = settings.send_rate();
-        let buf_len = (send_rate as f32 * settings.buf_duration).ceil() as usize;
+        let buf_len = (send_rate * settings.buf_duration.as_secs_f64()).ceil() as usize;
 
         Self {
             settings,
@@ -84,12 +90,12 @@ impl<T: Snapshot> Buffer<T> {
             buf: VecDeque::with_capacity(buf_len),
             buf_len,
 
-            last_remote_time: 0.0,
+            last_remote_time: Duration::default(),
             last_remote_instant: Instant::now(),
             last_remote_counter: 0,
 
             remote_delta_time: ExponentialMovingAverage::new(
-                send_rate * settings.dynamic_playback_jitter_duration as f64,
+                send_rate * settings.dynamic_playback_jitter_duration.as_secs_f64(),
             ),
         }
     }
@@ -114,7 +120,10 @@ impl<T: Snapshot> Buffer<T> {
             // 3. Add snapshot delta time to moving average
             // (Assumes that the received snapshot went to the front of the buf)
             if let Some(ss_from) = buf_iter.next() {
-                let delta_time = ss_to.remote_time() - ss_from.remote_time();
+                let delta_time = {
+                    // Don't subtract durations - allow negative
+                    ss_to.remote_time().as_secs_f64() - ss_from.remote_time().as_secs_f64()
+                };
                 self.remote_delta_time.add(delta_time);
             }
 
@@ -127,12 +136,12 @@ impl<T: Snapshot> Buffer<T> {
     /// Compute the playback offset dynamically to adjust for
     /// measured network jitter. Exposed publically for debugging.
     /// (seconds)
-    pub fn dynamic_playback_offset(&self) -> f64 {
-        let playback_offset = self.settings.playback_offset() as f64;
+    pub fn dynamic_playback_offset(&self) -> Duration {
+        let playback_offset = self.settings.playback_offset();
 
         if self.settings.dynamic_playback_time {
             // Account for recent network jitter
-            playback_offset + self.remote_delta_time.std_dev
+            playback_offset + Duration::from_secs_f64(self.remote_delta_time.std_dev)
         } else {
             playback_offset
         }
@@ -174,10 +183,10 @@ impl<T: Clone> Clone for Buffer<T> {
         Self {
             settings: self.settings,
             buf: self.buf.clone(),
-            buf_len: self.buf_len.clone(),
-            last_remote_time: self.last_remote_time.clone(),
-            last_remote_instant: self.last_remote_instant.clone(),
-            last_remote_counter: self.last_remote_counter.clone(),
+            buf_len: self.buf_len,
+            last_remote_time: self.last_remote_time,
+            last_remote_instant: self.last_remote_instant,
+            last_remote_counter: self.last_remote_counter,
             remote_delta_time: self.remote_delta_time.clone(),
         }
     }
@@ -193,13 +202,13 @@ impl<T: Snapshot> Playback<T> {
             _phantom: PhantomData,
 
             remote_counter: buf.last_remote_counter,
-            playback_time: 0.0,
+            playback_time: Duration::default(),
             timescale: 1.0,
 
             catchup_time: ExponentialMovingAverage::new(send_rate), // 1 seconds worth of duration,
-            db_extrapolating_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
-            db_clamping_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
-            db_scaling_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
+            dbg_extrapolating_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
+            dbg_clamping_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
+            dbg_scaling_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
         }
     }
 
@@ -226,7 +235,7 @@ impl<T: Snapshot> Playback<T> {
 
                 // Take the top two packets as the interpolation points,
                 // noting that time t will be outside of 0.0 - 1.0
-                let ss_to = buf.buf.get(0);
+                let ss_to = buf.buf.front();
                 let ss_from = buf.buf.get(1);
                 match (ss_from, ss_to) {
                     (Some(ss_from), Some(ss_to)) => {
@@ -267,13 +276,13 @@ impl<T: Snapshot> Playback<T> {
     }
 
     /// Draw a new interpolated snapshot by passing in how much time
-    /// has passed since the last step (seconds).
-    pub fn step(&mut self, delta_time: f64, buf: &Buffer<T>) -> Option<T> {
+    /// has passed since the last step.
+    pub fn step(&mut self, delta_time: Duration, buf: &Buffer<T>) -> Option<T> {
         let playback_offset = buf.dynamic_playback_offset();
-        let playback_clamp = self.settings.playback_clamp() as f64;
+        let playback_clamp = self.settings.playback_clamp();
 
         // 1. Step playback time
-        self.playback_time += delta_time * self.timescale;
+        self.playback_time += delta_time.mul_f64(self.timescale);
 
         // 2. Find the packets between which to interpolate (for later)
         let snapshots = self.interpolating_between(buf);
@@ -289,34 +298,43 @@ impl<T: Snapshot> Playback<T> {
 
         // A new network packet has arrived into the buffer
         // since our last step. Use this as an opportunity
-        // to re-evaluate our time scale & acceleration.
+        // to re-evaluate our playback time scale acceleration.
         if self.remote_counter != buf.last_remote_counter {
             self.remote_counter = buf.last_remote_counter;
 
             // 3. Clamp the playback time about the target time
-            let remote_time = buf.last_remote_time
+            let expected_remote_time = buf.last_remote_time
                 // Account for any time which has passed since we, the local client, first
                 // saw this packet arrive in the buffer.
-                + buf.last_remote_instant.elapsed().as_secs_f64();
-            let playback_target_time = remote_time - playback_offset;
+                + buf.last_remote_instant.elapsed();
+            let playback_target_time =
+                Duration::saturating_sub(expected_remote_time, playback_offset);
             {
-                let min = playback_target_time - playback_clamp;
+                let min = Duration::saturating_sub(playback_target_time, playback_clamp);
                 let max = playback_target_time + playback_clamp;
 
-                if self.playback_time < min {
-                    self.playback_time = min;
-                    self.db_clamping_ema.add(1.0);
-                } else if self.playback_time > max {
-                    self.playback_time = max;
-                    self.db_clamping_ema.add(1.0);
-                } else {
-                    self.db_clamping_ema.add(0.0);
+                {
+                    if self.playback_time < min {
+                        // Clamp at minimum
+                        self.playback_time = min;
+                        self.dbg_clamping_ema.add(1.0);
+                    } else if self.playback_time > max {
+                        // Clamp at maximum
+                        self.playback_time = max;
+                        self.dbg_clamping_ema.add(1.0);
+                    } else {
+                        // No clamping
+                        self.dbg_clamping_ema.add(0.0);
+                    }
                 }
             };
-            self.db_extrapolating_ema.add(extrapolating);
+            self.dbg_extrapolating_ema.add(extrapolating);
 
             // 4. Add catchup time to moving average
-            let catchup_time = playback_target_time - self.playback_time;
+            let catchup_time = {
+                // Don't subtract the Durations - we want to allow negative catchup time
+                playback_target_time.as_secs_f64() - self.playback_time.as_secs_f64()
+            };
             self.catchup_time.add(catchup_time);
 
             // 5. Compute the timescale in order to best track the remote's timescale
@@ -331,9 +349,9 @@ impl<T: Snapshot> Playback<T> {
         }) = snapshots
         {
             let t = linear_map(
-                self.playback_time,
-                ss_from.remote_time(),
-                ss_to.remote_time(),
+                self.playback_time.as_secs_f64(),
+                ss_from.remote_time().as_secs_f64(),
+                ss_to.remote_time().as_secs_f64(),
                 0.0,
                 1.0,
             );
@@ -346,18 +364,19 @@ impl<T: Snapshot> Playback<T> {
         }
     }
 
+    /// catchup_time is in seconds, and may be negative and therefore isn't represented by a Duration
     fn timescale(&mut self, catchup_time: f64) -> f64 {
-        if catchup_time < self.settings.slow_threshold() as f64 {
-            self.db_scaling_ema.add(1.0);
+        if catchup_time < self.settings.slow_threshold().as_secs_f64() {
+            self.dbg_scaling_ema.add(1.0);
             return self.settings.playback_slow_speed as f64;
         }
 
-        if catchup_time > self.settings.fast_threshold() as f64 {
-            self.db_scaling_ema.add(1.0);
+        if catchup_time > self.settings.fast_threshold().as_secs_f64() {
+            self.dbg_scaling_ema.add(1.0);
             return self.settings.playback_fast_speed as f64;
         }
 
-        self.db_scaling_ema.add(0.0);
+        self.dbg_scaling_ema.add(0.0);
         1.0
     }
 }
