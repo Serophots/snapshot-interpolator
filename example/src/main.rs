@@ -131,6 +131,11 @@ impl snapshot::Snapshot for Position {
 }
 
 static SETTINGS: LazyLock<snapshot::Settings> = LazyLock::new(|| snapshot::Settings {
+    period: Duration::from_millis(50),
+    playback_offset_periods: 3.0,
+    playback_clamp_periods: 3.0,
+    playback_fast_periods: 1.5,
+    playback_slow_periods: -1.5,
     ..Default::default()
 });
 
