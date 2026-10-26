@@ -131,8 +131,6 @@ impl snapshot::Snapshot for Position {
 }
 
 static SETTINGS: LazyLock<snapshot::Settings> = LazyLock::new(|| snapshot::Settings {
-    playback_offset_periods: 5.0,
-    dynamic_playback_time: false,
     ..Default::default()
 });
 
@@ -271,8 +269,8 @@ fn snapshot_example(title: &str, net_conditions: &mut impl NetConditionsState, a
 
         if args.no_smoothing {
             if let Some(pos) = buf.front() {
-                green_rect.x = pos.x.round() as i32;
-                green_rect.y = pos.y.round() as i32;
+                green_rect.x = pos.snapshot.x.round() as i32;
+                green_rect.y = pos.snapshot.y.round() as i32;
             }
         } else {
             if let Some(pos) = play.step(delta_time, &buf) {
@@ -349,17 +347,17 @@ fn snapshot_example(title: &str, net_conditions: &mut impl NetConditionsState, a
             println!("==================");
             println!(
                 "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
-                (play.dbg_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
+                (play.dbg_extrapolating_ema.avg() * 10.0).round()
             );
             println!(" -> have we had to extrapolate between packets?");
             println!(
                 "dbg_clamp ing     {} (GOOD 0 - 10 BAD)",
-                (play.dbg_clamping_ema.value.unwrap_or_default() * 10.0).round()
+                (play.dbg_clamping_ema.avg() * 10.0).round()
             );
             println!(" -> have we had to clamp playback time?");
             println!(
                 "dbg_scaling       {} (GOOD 0 - 10 BAD)",
-                (play.dbg_scaling_ema.value.unwrap_or_default() * 10.0).round()
+                (play.dbg_scaling_ema.avg() * 10.0).round()
             );
             println!(" -> have we had to accelerate/decelerate playback time?");
             println!("");
@@ -385,10 +383,15 @@ fn snapshot_example(title: &str, net_conditions: &mut impl NetConditionsState, a
             );
             println!(" -> how far behind remote time should our playback be?");
             println!(
-                "remote delta time {}ms - targets time period + latency (+ frame time)",
-                (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
+                "remote delta time {}ms +- {}ms",
+                (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round(),
+                (buf.remote_delta_time.std_dev * 1000.0).round()
             );
-            println!(" -> how far behind remote time should our playback be?");
+            println!(
+                "local  delta time {}ms +- {}ms",
+                (buf.local_delta_time.value.unwrap_or_default() * 1000.0).round(),
+                (buf.local_delta_time.std_dev * 1000.0).round()
+            );
             println!("==================");
             drop(io_lock)
         }
