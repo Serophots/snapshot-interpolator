@@ -49,7 +49,10 @@ mod tests {
         buf.insert_snapshot(three);
 
         assert_eq!(
-            buf.buf.iter().map(|s| s.number).collect::<Vec<_>>(),
+            buf.buf
+                .iter()
+                .map(|s| s.snapshot.number)
+                .collect::<Vec<_>>(),
             vec![4, 3, 2, 1]
         );
     }

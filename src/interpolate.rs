@@ -19,7 +19,7 @@ use crate::{ExponentialMovingAverage, Settings, Snapshot, linear_map};
 pub struct Buffer<T> {
     settings: &'static Settings,
 
-    pub(crate) buf: VecDeque<T>,
+    pub(crate) buf: VecDeque<BufferEntry<T>>,
     buf_len: usize,
 
     /// The remote time of the last packet received into the buffer
@@ -32,6 +32,17 @@ pub struct Buffer<T> {
     /// offset.
     ///
     /// A moving average of the time (seconds) between the latest two packets
+
+    /// Measure jitter in how frequently we're receiving the remote's packets,
+    /// i.e. after being subject to the network conditions.
+    ///
+    /// Averages the local time delta between the latest two packets
+    pub local_delta_time: ExponentialMovingAverage,
+
+    /// Measure jitter in how frequently the remote is sending packets,
+    /// prior to being subjected to the network conditions.
+    ///
+    /// Averages the remote time delta between the latest two packets
     pub remote_delta_time: ExponentialMovingAverage,
 }
 
@@ -94,6 +105,9 @@ impl<T: Snapshot> Buffer<T> {
             last_remote_instant: Instant::now(),
             last_remote_counter: 0,
 
+            local_delta_time: ExponentialMovingAverage::new(
+                send_rate * settings.dynamic_playback_jitter_duration.as_secs_f64(),
+            ),
             remote_delta_time: ExponentialMovingAverage::new(
                 send_rate * settings.dynamic_playback_jitter_duration.as_secs_f64(),
             ),
@@ -101,12 +115,12 @@ impl<T: Snapshot> Buffer<T> {
     }
 
     /// Retrieve the most recent snapshot
-    pub fn front(&self) -> Option<&T> {
+    pub fn front(&self) -> Option<&BufferEntry<T>> {
         self.buf.front()
     }
 
     /// Retrieve the least recent snapshot that's still in the buffer
-    pub fn back(&self) -> Option<&T> {
+    pub fn back(&self) -> Option<&BufferEntry<T>> {
         self.buf.back()
     }
 
@@ -120,11 +134,16 @@ impl<T: Snapshot> Buffer<T> {
             // 3. Add snapshot delta time to moving average
             // (Assumes that the received snapshot went to the front of the buf)
             if let Some(ss_from) = buf_iter.next() {
-                let delta_time = {
-                    // Don't subtract durations - allow negative
-                    ss_to.remote_time().as_secs_f64() - ss_from.remote_time().as_secs_f64()
+                let remote_delta_time = {
+                    (ss_to.remote_time().as_secs_f64() - ss_from.remote_time().as_secs_f64()).abs()
                 };
-                self.remote_delta_time.add(delta_time);
+                self.remote_delta_time.add(remote_delta_time);
+                let local_delta_time = {
+                    (ss_to.local_instant.elapsed().as_secs_f64()
+                        - ss_from.local_instant.elapsed().as_secs_f64())
+                    .abs()
+                };
+                self.local_delta_time.add(local_delta_time);
             }
 
             self.last_remote_instant = Instant::now();
@@ -160,6 +179,11 @@ impl<T: Snapshot> Buffer<T> {
             return;
         }
 
+        let item = BufferEntry {
+            snapshot: item,
+            local_instant: Instant::now(),
+        };
+
         if let Some(position) = self
             .buf
             .iter()
@@ -187,6 +211,7 @@ impl<T: Clone> Clone for Buffer<T> {
             last_remote_time: self.last_remote_time,
             last_remote_instant: self.last_remote_instant,
             last_remote_counter: self.last_remote_counter,
+            local_delta_time: self.local_delta_time.clone(),
             remote_delta_time: self.remote_delta_time.clone(),
         }
     }
@@ -243,8 +268,8 @@ impl<T: Snapshot> Playback<T> {
                         debug_assert!(self.playback_time >= ss_to.remote_time());
 
                         Some(InterpolatingBetween {
-                            from: ss_from,
-                            to: ss_to,
+                            from: &ss_from.snapshot,
+                            to: &ss_to.snapshot,
                             extrapolating: true,
                         })
                     }
@@ -261,8 +286,8 @@ impl<T: Snapshot> Playback<T> {
                         debug_assert!(self.playback_time >= ss_from.remote_time());
 
                         Some(InterpolatingBetween {
-                            from: ss_from,
-                            to: ss_to,
+                            from: &ss_from.snapshot,
+                            to: &ss_to.snapshot,
                             extrapolating: false,
                         })
                     }
@@ -360,7 +385,7 @@ impl<T: Snapshot> Playback<T> {
         } else {
             // There isn't any packet in the buffer which arrived before the playback time
 
-            buf.front().cloned()
+            buf.front().map(|e| e.snapshot.clone())
         }
     }
 
@@ -378,6 +403,18 @@ impl<T: Snapshot> Playback<T> {
 
         self.dbg_scaling_ema.add(0.0);
         1.0
+    }
+}
+
+#[derive(Clone)]
+pub struct BufferEntry<T> {
+    pub snapshot: T,
+    pub local_instant: Instant,
+}
+
+impl<T: Snapshot> BufferEntry<T> {
+    pub fn remote_time(&self) -> Duration {
+        self.snapshot.remote_time()
     }
 }
 
