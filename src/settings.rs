@@ -60,6 +60,7 @@ impl Default for Settings {
             playback_clamp_periods: 1.0,
             playback_fast_periods: 0.5,
             playback_fast_speed: 1.0 + 0.02,
+
             playback_slow_periods: -0.5,
             playback_slow_speed: 1.0 - 0.04,
 
@@ -82,7 +83,7 @@ impl Settings {
     }
 
     pub fn slow_threshold(&self) -> Duration {
-        self.period.mul_f32(self.playback_fast_periods)
+        self.period.mul_f32(-1.0 * self.playback_slow_periods)
     }
 
     /// (expected) packets per second

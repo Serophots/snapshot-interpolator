@@ -366,7 +366,7 @@ impl<T: Snapshot> Playback<T> {
 
     /// catchup_time is in seconds, and may be negative and therefore isn't represented by a Duration
     fn timescale(&mut self, catchup_time: f64) -> f64 {
-        if catchup_time < self.settings.slow_threshold().as_secs_f64() {
+        if -catchup_time >= self.settings.slow_threshold().as_secs_f64() {
             self.dbg_scaling_ema.add(1.0);
             return self.settings.playback_slow_speed as f64;
         }
