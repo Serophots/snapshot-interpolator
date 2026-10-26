@@ -1,3 +1,23 @@
+#[derive(Clone, Default)]
+pub struct Average<const N: usize> {
+    values: heapless::HistoryBuf<f64, N>,
+}
+
+impl<const N: usize> Average<N> {
+    pub fn add(&mut self, v: f64) {
+        self.values.write(v);
+    }
+
+    pub fn avg(&self) -> f64 {
+        let len = self.values.len();
+        if len == 0 {
+            0.0
+        } else {
+            self.values.iter().sum::<f64>() / (len as f64)
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ExponentialMovingAverage {
     alpha: f64,

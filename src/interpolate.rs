@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{ExponentialMovingAverage, Settings, Snapshot, linear_map};
+use crate::{Average, ExponentialMovingAverage, Settings, Snapshot, linear_map};
 
 /// Buffers snapshots as they come in from the network so that
 /// they may be played back by a 'Playback' in live time, some
@@ -74,20 +74,20 @@ pub struct Playback<T> {
     /// in order to match the target. (Seconds)
     pub catchup_time: ExponentialMovingAverage,
 
-    /// A debugging measure of how much the last 10 seconds
+    /// A debugging measure of how much the last 10 packets
     /// have relied on extrapolation, between 1.0 - all, and
     /// 0.0 - none. (None is healthy)
-    pub dbg_extrapolating_ema: ExponentialMovingAverage,
+    pub dbg_extrapolating_ema: Average<10>,
 
-    /// A debugging measure of how much the last 10 seconds
+    /// A debugging measure of how much the last 10 packets
     /// have relied on clamping the local timescale, between
     /// 1.0 - all, and 0.0 - none. (None is healthy)
-    pub dbg_clamping_ema: ExponentialMovingAverage,
+    pub dbg_clamping_ema: Average<10>,
 
-    /// A debugging measure of how much the last 10 seconds
+    /// A debugging measure of how much the last 10 packets
     /// have relied on time scaling, between 1.0 - all, and
     /// 0.0 - none. (None is healthy, some is expected)
-    pub dbg_scaling_ema: ExponentialMovingAverage,
+    pub dbg_scaling_ema: Average<10>,
 }
 
 impl<T: Snapshot> Buffer<T> {
@@ -231,9 +231,9 @@ impl<T: Snapshot> Playback<T> {
             timescale: 1.0,
 
             catchup_time: ExponentialMovingAverage::new(send_rate), // 1 seconds worth of duration,
-            dbg_extrapolating_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
-            dbg_clamping_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
-            dbg_scaling_ema: ExponentialMovingAverage::new(send_rate * 10.0), // 10 seconds worth of duration,
+            dbg_extrapolating_ema: Average::default(),
+            dbg_clamping_ema: Average::default(),
+            dbg_scaling_ema: Average::default(),
         }
     }
 

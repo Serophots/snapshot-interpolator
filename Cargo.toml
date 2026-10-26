@@ -20,4 +20,5 @@ unwrap_used = "warn"
 unchecked_time_subtraction = "warn"
 
 [dependencies]
+heapless = "0.9"
 num-traits = "0.2"
