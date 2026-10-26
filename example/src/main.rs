@@ -8,6 +8,7 @@ use sdl3::keyboard::Keycode;
 use sdl3::pixels::Color;
 use sdl3::rect::Rect;
 use std::{
+    io,
     sync::LazyLock,
     time::{Duration, Instant},
 };
@@ -21,12 +22,36 @@ struct Args {
     no_green_square: bool,
     #[arg(long)]
     no_smoothing: bool,
+    #[arg(long)]
+    debug: bool,
 }
 
-struct NetConditionsState {
+struct NetConditionsStateInstant;
+
+impl NetConditionsState for NetConditionsStateInstant {
+    fn sample_ping<R: Rng>(&mut self, _rng: &mut R) -> f64 {
+        0.0
+    }
+
+    fn sample_drop<R: Rng>(&mut self, _rng: &mut R) -> bool {
+        false
+    }
+}
+
+struct NetConditionsStateWeibull {
     ping_base: f64,
     ping_distr: Weibull<f64>,
     droprate: f64,
+}
+
+impl NetConditionsState for NetConditionsStateWeibull {
+    fn sample_ping<R: Rng>(&mut self, rng: &mut R) -> f64 {
+        self.ping_base + self.ping_distr.sample(rng)
+    }
+
+    fn sample_drop<R: Rng>(&mut self, rng: &mut R) -> bool {
+        rng.random_bool(self.droprate)
+    }
 }
 
 struct NetConditionsProfile {
@@ -38,38 +63,39 @@ struct NetConditionsProfile {
 
 #[derive(Copy, Clone, clap::Subcommand)]
 enum NetConditionsProfileEnum {
+    Instant,
     Good,
     Decent,
     Poor,
 }
 
 const PROFILE_GOOD: NetConditionsProfile = NetConditionsProfile {
-    baseline_ms: 15.0,
-    shape: 2.0,
-    mean_jitter_ms: 2.0,
-    droprate: 0.001,
-};
-
-const PROFILE_DECENT: NetConditionsProfile = NetConditionsProfile {
     baseline_ms: 40.0,
     shape: 1.5,
     mean_jitter_ms: 8.0,
     droprate: 0.01,
 };
 
+const PROFILE_DECENT: NetConditionsProfile = NetConditionsProfile {
+    baseline_ms: 100.0,
+    shape: 1.5,
+    mean_jitter_ms: 40.0,
+    droprate: 0.01,
+};
+
 const PROFILE_POOR: NetConditionsProfile = NetConditionsProfile {
-    baseline_ms: 80.0,
+    baseline_ms: 200.0,
     shape: 1.2,
-    mean_jitter_ms: 20.0,
+    mean_jitter_ms: 200.0,
     droprate: 0.03,
 };
 
-impl From<NetConditionsProfile> for NetConditionsState {
+impl From<NetConditionsProfile> for NetConditionsStateWeibull {
     fn from(value: NetConditionsProfile) -> Self {
         let scale =
             value.mean_jitter_ms / statrs::function::gamma::gamma(1.0 + (1.0 / value.shape));
 
-        NetConditionsState {
+        NetConditionsStateWeibull {
             ping_base: value.baseline_ms,
             ping_distr: Weibull::new(scale, value.shape).unwrap(),
             droprate: value.droprate,
@@ -77,14 +103,10 @@ impl From<NetConditionsProfile> for NetConditionsState {
     }
 }
 
-impl NetConditionsState {
-    pub fn sample_ping<R: Rng>(&mut self, rng: &mut R) -> f64 {
-        self.ping_base + self.ping_distr.sample(rng)
-    }
+trait NetConditionsState {
+    fn sample_ping<R: Rng>(&mut self, rng: &mut R) -> f64;
 
-    pub fn sample_drop<R: Rng>(&mut self, rng: &mut R) -> bool {
-        rng.random_bool(self.droprate)
-    }
+    fn sample_drop<R: Rng>(&mut self, rng: &mut R) -> bool;
 }
 
 #[derive(Clone)]
@@ -109,32 +131,45 @@ impl snapshot::Snapshot for Position {
 }
 
 static SETTINGS: LazyLock<snapshot::Settings> = LazyLock::new(|| snapshot::Settings {
+    playback_offset_periods: 5.0,
+    dynamic_playback_time: false,
     ..Default::default()
 });
 
 fn main() {
     let args = <Args as clap::Parser>::parse();
 
-    let net_conditions_profile = match args.profile {
-        NetConditionsProfileEnum::Good => PROFILE_GOOD,
-        NetConditionsProfileEnum::Decent => PROFILE_DECENT,
-        NetConditionsProfileEnum::Poor => PROFILE_POOR,
-    };
-
     let window_title = format!(
         "Snapshot Interpolation Demo: Net conditions {}",
         match args.profile {
-            NetConditionsProfileEnum::Good => "GOOD (17ms +- 1ms)",
-            NetConditionsProfileEnum::Decent => "DECENT (48ms +- 6ms)",
-            NetConditionsProfileEnum::Poor => "POOR (100ms +- 17ms)",
+            NetConditionsProfileEnum::Instant => "INSTANT (0ms)",
+            NetConditionsProfileEnum::Good => "GOOD (40ms +- 8ms)",
+            NetConditionsProfileEnum::Decent => "DECENT (100ms +- 40ms)",
+            NetConditionsProfileEnum::Poor => "POOR (200ms +- 200ms)",
         }
     );
 
-    let mut net_conditions = NetConditionsState::from(net_conditions_profile);
-
-    snapshot_example(&window_title, &mut net_conditions, &args);
-
-    // test_clock_drift();
+    match args.profile {
+        NetConditionsProfileEnum::Instant => {
+            let mut net_conditions = NetConditionsStateInstant;
+            snapshot_example(&window_title, &mut net_conditions, &args);
+        }
+        NetConditionsProfileEnum::Good => {
+            let mut net_conditions =
+                NetConditionsStateWeibull::from(NetConditionsStateWeibull::from(PROFILE_GOOD));
+            snapshot_example(&window_title, &mut net_conditions, &args);
+        }
+        NetConditionsProfileEnum::Decent => {
+            let mut net_conditions =
+                NetConditionsStateWeibull::from(NetConditionsStateWeibull::from(PROFILE_DECENT));
+            snapshot_example(&window_title, &mut net_conditions, &args);
+        }
+        NetConditionsProfileEnum::Poor => {
+            let mut net_conditions =
+                NetConditionsStateWeibull::from(NetConditionsStateWeibull::from(PROFILE_POOR));
+            snapshot_example(&window_title, &mut net_conditions, &args);
+        }
+    };
 }
 
 #[allow(dead_code)]
@@ -172,7 +207,7 @@ const CUBE_SPEED: f32 = 3.0;
 // const CUBE_SIZE: i32 = 50;
 // const CUBE_SPEED: f32 = 1.5;
 
-fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState, args: &Args) {
+fn snapshot_example(title: &str, net_conditions: &mut impl NetConditionsState, args: &Args) {
     let mut buf = snapshot::Buffer::<Position>::new(&*SETTINGS);
     let mut play = snapshot::Playback::new(&buf);
 
@@ -209,7 +244,10 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState, args: 
 
     let mut rng = rand::rng();
 
+    let mut i = 0usize;
     'running: loop {
+        i += 1;
+
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -289,12 +327,12 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState, args: 
                 ));
             }
 
-            pipeline_snapshots.retain(|snapshot| {
-                if snapshot.1.elapsed() >= snapshot.2 {
+            pipeline_snapshots.retain(|(snapshot, snapshot_instant, snapshot_ping)| {
+                if snapshot_instant.elapsed() >= *snapshot_ping {
                     // Simulate the local client receiving this snapshot
 
                     if !net_conditions.sample_drop(&mut rng) {
-                        buf.insert_snapshot(snapshot.0.clone());
+                        buf.insert_snapshot(snapshot.clone());
                     }
 
                     return false;
@@ -306,34 +344,53 @@ fn snapshot_example(title: &str, net_conditions: &mut NetConditionsState, args: 
             std::thread::sleep(Duration::from_millis(2));
         }
 
-        // println!(
-        //     "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
-        //     (play.db_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
-        // );
-        // println!(
-        //     "dbg_clamping      {} (GOOD 0 - 10 BAD)",
-        //     (play.db_clamping_ema.value.unwrap_or_default() * 10.0).round()
-        // );
-        // println!(
-        //     "dbg_scaling       {} (GOOD 0 - 10 BAD)",
-        //     (play.db_scaling_ema.value.unwrap_or_default() * 10.0).round()
-        // );
-        // println!(
-        //     "catchup time  ({} <=) {}ms (<= {}) - targets 0 ms (time scaling: {} - {})",
-        //     -(SETTINGS.playback_clamp() * 1000.0),
-        //     (play.catchup_time.value.unwrap_or_default() * 1000.0).round(),
-        //     SETTINGS.playback_clamp() * 1000.0,
-        //     SETTINGS.slow_threshold() * 1000.0,
-        //     SETTINGS.fast_threshold() * 1000.0,
-        // );
-        // println!(
-        //     "dyn playback time {}ms",
-        //     (buf.dynamic_playback_offset() * 1000.0).round()
-        // );
-        // println!(
-        //     "remote delta time {}ms - targets time period + latency (+ frame time)",
-        //     (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
-        // );
-        // println!("timescale     {}", play.timescale);
+        if i.rem_euclid(25) == 0 && args.debug {
+            let io_lock = io::stdout().lock();
+            println!("==================");
+            println!(
+                "dbg_extrapolating {} (GOOD 0 - 10 BAD)",
+                (play.dbg_extrapolating_ema.value.unwrap_or_default() * 10.0).round()
+            );
+            println!(" -> have we had to extrapolate between packets?");
+            println!(
+                "dbg_clamp ing     {} (GOOD 0 - 10 BAD)",
+                (play.dbg_clamping_ema.value.unwrap_or_default() * 10.0).round()
+            );
+            println!(" -> have we had to clamp playback time?");
+            println!(
+                "dbg_scaling       {} (GOOD 0 - 10 BAD)",
+                (play.dbg_scaling_ema.value.unwrap_or_default() * 10.0).round()
+            );
+            println!(" -> have we had to accelerate/decelerate playback time?");
+            println!("");
+            println!(
+                "catchup time  {}ms",
+                (play.catchup_time.value.unwrap_or_default() * 1000.0).round()
+            );
+            println!(
+                " -> bounds       {}ms <= x <= {}ms",
+                -(SETTINGS.playback_clamp().as_millis() as i128),
+                SETTINGS.playback_clamp().as_millis()
+            );
+            println!(
+                " -> acceleration {}ms <= x <= {}ms",
+                -(SETTINGS.slow_threshold().as_millis() as i128),
+                SETTINGS.fast_threshold().as_millis(),
+            );
+            println!("timescaling   {}", play.timescale);
+            println!("");
+            println!(
+                "dyn playback ofs. {}ms",
+                buf.dynamic_playback_offset().as_millis()
+            );
+            println!(" -> how far behind remote time should our playback be?");
+            println!(
+                "remote delta time {}ms - targets time period + latency (+ frame time)",
+                (buf.remote_delta_time.value.unwrap_or_default() * 1000.0).round()
+            );
+            println!(" -> how far behind remote time should our playback be?");
+            println!("==================");
+            drop(io_lock)
+        }
     }
 }

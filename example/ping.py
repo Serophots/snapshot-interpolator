@@ -12,19 +12,19 @@ import matplotlib.pyplot as plt
 # mean_jitter_ms: mean additional delay
 PROFILES = {
     "Good": {
-        "baseline_ms": 15,
-        "shape": 2.0,
-        "mean_jitter_ms": 2,
-    },
-    "Decent": {
         "baseline_ms": 40,
         "shape": 1.5,
         "mean_jitter_ms": 8,
     },
+    "Decent": {
+        "baseline_ms": 100,
+        "shape": 1.5,
+        "mean_jitter_ms": 40,
+    },
     "Poor": {
-        "baseline_ms": 80,
+        "baseline_ms": 200,
         "shape": 1.2,
-        "mean_jitter_ms": 20,
+        "mean_jitter_ms": 200,
     },
 }
 
