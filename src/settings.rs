@@ -56,7 +56,7 @@ impl Default for Settings {
             period: Duration::from_millis(200),
 
             dynamic_playback_time: true,
-            dynamic_playback_jitter_duration: Duration::from_secs(2),
+            dynamic_playback_jitter_duration: Duration::from_secs(4),
 
             playback_clamp_periods: 1.0,
             playback_fast_periods: 0.5,
