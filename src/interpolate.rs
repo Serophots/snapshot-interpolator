@@ -160,7 +160,7 @@ impl<T: Snapshot> Buffer<T> {
 
         if self.settings.dynamic_playback_time {
             // Account for recent network jitter
-            playback_offset + Duration::from_secs_f64(self.remote_delta_time.std_dev)
+            playback_offset + Duration::from_secs_f64(self.local_delta_time.std_dev)
         } else {
             playback_offset
         }
