@@ -22,7 +22,8 @@ pub struct Settings {
     /// last 2 seconds of received packets.
     pub dynamic_playback_jitter_duration: Duration,
 
-    /// How far behind should the playback be? In multiples of the period
+    /// How far behind should the playback aim to be? In multiples of the period
+    /// Dynamic playback offset is then added to this.
     pub playback_offset_periods: f32,
 
     /// Clamp the playback time this multiple of the time period
